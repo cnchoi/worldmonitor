@@ -2,7 +2,7 @@ name: Sync Upstream
 
 on:
   schedule:
-    - cron: '0 0 * * *' # 매일 오전 9시
+    - cron: '0 21 * * *' # 매일 오전 9시
   workflow_dispatch:
 
 jobs:
