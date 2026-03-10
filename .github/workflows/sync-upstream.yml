@@ -2,8 +2,13 @@ name: Sync Upstream
 
 on:
   schedule:
-    - cron: '0 21 * * *' # 매일 오전 9시
+    - cron: '0 21 * * *' # 매일 한국 시간 오전 6시
   workflow_dispatch:
+
+# 이 섹션이 추가되어야 워크플로우 파일(.yml) 업데이트 에러를 막을 수 있습니다.
+permissions:
+  contents: write
+  workflows: write
 
 jobs:
   sync:
@@ -23,8 +28,8 @@ jobs:
           git remote add upstream https://github.com/koala73/worldmonitor.git
           git fetch upstream
           
-          # [핵심] 원본의 main 내용을 가져오되, 현재 실행 중인 워크플로우 파일은 제외하고 업데이트합니다.
           git checkout main
+          # 원본 코드를 우선 병합하되 내 워크플로우 파일은 보존합니다.
           git merge upstream/main -X theirs --allow-unrelated-histories
           
           git push origin main
