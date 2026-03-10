@@ -2,7 +2,7 @@ name: Sync Upstream
 
 on:
   schedule:
-    - cron: '0 21 * * *' # 한국 시간 매일 오전 6시
+    - cron: '0 21 * * *'
   workflow_dispatch:
 
 permissions:
@@ -23,12 +23,8 @@ jobs:
         run: |
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
-          
           git remote add upstream https://github.com/koala73/worldmonitor.git
           git fetch upstream
-          
           git checkout main
-          # 원본과 충돌 시 원본을 우선하되, 현재 이 워크플로우 파일은 보존합니다.
           git merge upstream/main -X theirs --allow-unrelated-histories
-          
           git push origin main
