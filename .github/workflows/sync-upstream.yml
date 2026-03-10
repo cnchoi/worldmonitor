@@ -2,10 +2,10 @@ name: Sync Upstream
 
 on:
   schedule:
-    - cron: '0 21 * * *' # 매일 한국 시간 오전 6시
+    - cron: '0 21 * * *' # 한국 시간 매일 오전 6시
   workflow_dispatch:
 
-# 이 섹션이 추가되어야 워크플로우 파일(.yml) 업데이트 에러를 막을 수 있습니다.
+# permissions와 그 아래 항목들은 '두 칸' 들여쓰기가 매우 중요합니다.
 permissions:
   contents: write
   workflows: write
@@ -29,7 +29,7 @@ jobs:
           git fetch upstream
           
           git checkout main
-          # 원본 코드를 우선 병합하되 내 워크플로우 파일은 보존합니다.
+          # 원본과 충돌 시 원본을 우선하되 내 워크플로우 파일은 보존합니다.
           git merge upstream/main -X theirs --allow-unrelated-histories
           
           git push origin main
