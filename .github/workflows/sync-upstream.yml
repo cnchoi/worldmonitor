@@ -5,7 +5,6 @@ on:
     - cron: '0 21 * * *' # 한국 시간 매일 오전 6시
   workflow_dispatch:
 
-# 아래 permissions 설정은 왼쪽 벽에 붙여서 작성해야 합니다.
 permissions:
   contents: write
   workflows: write
@@ -29,7 +28,6 @@ jobs:
           git fetch upstream
           
           git checkout main
-          # 원본과 충돌 시 원본을 우선하되, 현재 이 파일(sync-upstream.yml)은 유지합니다.
           git merge upstream/main -X theirs --allow-unrelated-histories
           
           git push origin main
