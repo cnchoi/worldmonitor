@@ -1,7 +1,7 @@
 /**
  * GlobeMap - 3D interactive globe using globe.gl
  *
- * Matches WorldMonitor's MapContainer API so it can be used as a drop-in
+ * Matches World Monitor's MapContainer API so it can be used as a drop-in
  * replacement within MapContainer when the user enables globe mode.
  *
  * Architecture mirrors Sentinel (sentinel.axonia.us):
@@ -1861,7 +1861,7 @@ export class GlobeMap {
     ['conflicts',     { markers: true,  arcs: false, paths: false, polygons: true }],
     ['cables',        { markers: true,  arcs: false, paths: true,  polygons: false }],
     ['satellites',        { markers: true,  arcs: false, paths: true,  polygons: true }],
-    ['notamOverlay',      { markers: true,  arcs: false, paths: false, polygons: false }],
+
     ['natural',           { markers: true,  arcs: false, paths: true,  polygons: true }],
   ]);
 
