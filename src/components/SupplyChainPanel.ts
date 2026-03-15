@@ -4,6 +4,7 @@ import type {
   GetChokepointStatusResponse,
   GetCriticalMineralsResponse,
 } from '@/services/supply-chain';
+import { TransitChart } from '@/utils/transit-chart';
 import { t } from '@/services/i18n';
 import { escapeHtml } from '@/utils/sanitize';
 import { isFeatureAvailable } from '@/services/runtime-config';
@@ -16,18 +17,38 @@ export class SupplyChainPanel extends Panel {
   private chokepointData: GetChokepointStatusResponse | null = null;
   private mineralsData: GetCriticalMineralsResponse | null = null;
   private activeTab: TabId = 'chokepoints';
+  private expandedChokepoint: string | null = null;
+  private transitChart = new TransitChart();
+  private chartObserver: MutationObserver | null = null;
+  private chartMountTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
-    super({ id: 'supply-chain', title: t('panels.supplyChain') });
+    super({ id: 'supply-chain', title: t('panels.supplyChain'), defaultRowSpan: 2, infoTooltip: t('components.supplyChain.infoTooltip') });
     this.content.addEventListener('click', (e) => {
-      const target = (e.target as HTMLElement).closest('.panel-tab') as HTMLElement | null;
-      if (!target) return;
-      const tabId = target.dataset.tab as TabId;
-      if (tabId && tabId !== this.activeTab) {
-        this.activeTab = tabId;
+      const tab = (e.target as HTMLElement).closest('.panel-tab') as HTMLElement | null;
+      if (tab) {
+        const tabId = tab.dataset.tab as TabId;
+        if (tabId && tabId !== this.activeTab) {
+          this.clearTransitChart();
+          this.activeTab = tabId;
+          this.render();
+        }
+        return;
+      }
+      const card = (e.target as HTMLElement).closest('.trade-restriction-card') as HTMLElement | null;
+      if (card?.dataset.cpId) {
+        const newId = this.expandedChokepoint === card.dataset.cpId ? null : card.dataset.cpId;
+        if (!newId) this.clearTransitChart();
+        this.expandedChokepoint = newId;
         this.render();
       }
     });
+  }
+
+  private clearTransitChart(): void {
+    if (this.chartMountTimer) { clearTimeout(this.chartMountTimer); this.chartMountTimer = null; }
+    if (this.chartObserver) { this.chartObserver.disconnect(); this.chartObserver = null; }
+    this.transitChart.destroy();
   }
 
   public updateShippingRates(data: GetShippingRatesResponse): void {
@@ -46,6 +67,8 @@ export class SupplyChainPanel extends Panel {
   }
 
   private render(): void {
+    this.clearTransitChart();
+
     const tabsHtml = `
       <div class="panel-tabs">
         <button class="panel-tab ${this.activeTab === 'chokepoints' ? 'active' : ''}" data-tab="chokepoints">
@@ -83,10 +106,34 @@ export class SupplyChainPanel extends Panel {
       ${tabsHtml}
       ${unavailableBanner}
       <div class="economic-content">${contentHtml}</div>
-      <div class="economic-footer">
-        <span class="economic-source">${t('components.supplyChain.sources')}</span>
-      </div>
     `);
+
+    if (this.activeTab === 'chokepoints' && this.expandedChokepoint) {
+      const mountTransitChart = (): boolean => {
+        const el = this.content.querySelector(`[data-chart-cp="${this.expandedChokepoint}"]`) as HTMLElement | null;
+        if (!el) return false;
+        const cp = this.chokepointData?.chokepoints?.find(c => c.name === this.expandedChokepoint);
+        if (cp?.transitSummary?.history?.length) {
+          this.transitChart.mount(el, cp.transitSummary.history);
+        }
+        return true;
+      };
+
+      this.chartObserver = new MutationObserver(() => {
+        if (!mountTransitChart()) return;
+        if (this.chartMountTimer) { clearTimeout(this.chartMountTimer); this.chartMountTimer = null; }
+        this.chartObserver?.disconnect();
+        this.chartObserver = null;
+      });
+      this.chartObserver.observe(this.content, { childList: true, subtree: true });
+
+      // Fallback for no-op renders where setContent short-circuits and no mutation fires.
+      this.chartMountTimer = setTimeout(() => {
+        if (!mountTransitChart()) return;
+        if (this.chartObserver) { this.chartObserver.disconnect(); this.chartObserver = null; }
+        this.chartMountTimer = null;
+      }, 220);
+    }
   }
 
   private renderChokepoints(): string {
@@ -99,7 +146,27 @@ export class SupplyChainPanel extends Panel {
         const statusClass = cp.status === 'red' ? 'status-active' : cp.status === 'yellow' ? 'status-notified' : 'status-terminated';
         const statusDot = cp.status === 'red' ? 'sc-dot-red' : cp.status === 'yellow' ? 'sc-dot-yellow' : 'sc-dot-green';
         const aisDisruptions = cp.aisDisruptions ?? (cp.congestionLevel === 'normal' ? 0 : 1);
-        return `<div class="trade-restriction-card">
+        const ts = cp.transitSummary;
+        const hasRealtimeCounts = ts && ts.todayTotal > 0;
+        const hasWow = ts && ts.wowChangePct !== 0;
+        const wowPct = ts?.wowChangePct ?? 0;
+        const wowSpan = hasWow ? `<span class="trade-flow-change ${wowPct >= 0 ? 'change-positive' : 'change-negative'}">${wowPct >= 0 ? '\u25B2' : '\u25BC'}${Math.abs(wowPct).toFixed(1)}%</span>` : '';
+        const transitRow = hasRealtimeCounts
+          ? `<div class="trade-sector">${t('components.supplyChain.transit24h')}: ${ts.todayTotal} vessels (${ts.todayTanker} ${t('components.supplyChain.tankers')}, ${ts.todayCargo} ${t('components.supplyChain.cargo')}, ${ts.todayOther} other)${hasWow ? ` | ${t('components.supplyChain.wowChange')}: ${wowSpan}` : ''}</div>`
+          : hasWow
+            ? `<div class="trade-sector">${t('components.supplyChain.wowChange')}: ${wowSpan}</div>`
+            : '';
+        const riskRow = ts?.riskLevel
+          ? `<div class="trade-sector">${t('components.supplyChain.riskLevel')}: ${escapeHtml(ts.riskLevel)} | ${ts.incidentCount7d} incidents (7d)${ts.riskSummary ? ` | ${escapeHtml(ts.riskSummary)}` : ''}</div>`
+          : '';
+        const expanded = this.expandedChokepoint === cp.name;
+        const actionRow = expanded && ts?.riskReportAction
+          ? `<div class="trade-sector"><strong>${t('components.supplyChain.routingAction')}:</strong> ${escapeHtml(ts.riskReportAction)}</div>`
+          : '';
+        const chartPlaceholder = expanded && ts?.history?.length
+          ? `<div data-chart-cp="${escapeHtml(cp.name)}" style="margin-top:8px;min-height:120px"></div>`
+          : '';
+        return `<div class="trade-restriction-card${expanded ? ' expanded' : ''}" data-cp-id="${escapeHtml(cp.name)}" style="cursor:pointer">
           <div class="trade-restriction-header">
             <span class="trade-country">${escapeHtml(cp.name)}</span>
             <span class="sc-status-dot ${statusDot}"></span>
@@ -107,9 +174,15 @@ export class SupplyChainPanel extends Panel {
             <span class="trade-status ${statusClass}">${escapeHtml(cp.status)}</span>
           </div>
           <div class="trade-restriction-body">
-            <div class="trade-sector">${cp.activeWarnings} ${t('components.supplyChain.warnings')} · ${aisDisruptions} ${t('components.supplyChain.aisDisruptions')}</div>
+            ${cp.activeWarnings > 0 || aisDisruptions > 0
+              ? `<div class="trade-sector">${cp.activeWarnings} ${t('components.supplyChain.warnings')} · ${aisDisruptions} ${t('components.supplyChain.aisDisruptions')}${cp.directions?.length ? ` · ${escapeHtml(cp.directions.join('/'))}` : ''}</div>`
+              : cp.directions?.length ? `<div class="trade-sector">${escapeHtml(cp.directions.join('/'))}</div>` : ''}
+            ${transitRow}
+            ${riskRow}
             <div class="trade-description">${escapeHtml(cp.description)}</div>
             <div class="trade-affected">${escapeHtml(cp.affectedRoutes.join(', '))}</div>
+            ${actionRow}
+            ${chartPlaceholder}
           </div>
         </div>`;
       }).join('')}

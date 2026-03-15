@@ -149,7 +149,7 @@ import {
   shouldRefreshDailyBrief,
 } from '@/services/daily-market-brief';
 import { fetchCachedRiskScores } from '@/services/cached-risk-scores';
-import type { ThreatLevel as ClientThreatLevel } from '@/services/threat-classifier';
+import type { ThreatLevel as ClientThreatLevel } from '@/types';
 import type { NewsItem as ProtoNewsItem, ThreatLevel as ProtoThreatLevel } from '@/generated/client/worldmonitor/news/v1/service_client';
 
 const PROTO_TO_CLIENT_LEVEL: Record<ProtoThreatLevel, ClientThreatLevel> = {
@@ -308,6 +308,9 @@ export class DataLoaderManager implements AppModule {
   }
 
   private isPerFeedFallbackEnabled(): boolean {
+    // Desktop: server digest has fewer categories than client FEEDS config.
+    // Enable per-feed RSS fallback so missing categories fetch directly.
+    if (isDesktopRuntime()) return true;
     return isFeatureEnabled('newsPerFeedFallback');
   }
 
@@ -368,6 +371,9 @@ export class DataLoaderManager implements AppModule {
       }
       if (shouldLoad('polymarket')) {
         tasks.push({ name: 'predictions', task: runGuarded('predictions', () => this.loadPredictions()) });
+      }
+      if (shouldLoad('forecast')) {
+        tasks.push({ name: 'forecasts', task: runGuarded('forecasts', () => this.loadForecasts()) });
       }
       tasks.push({ name: 'pizzint', task: runGuarded('pizzint', () => this.loadPizzInt()) });
       if (shouldLoad('economic')) {
@@ -463,6 +469,7 @@ export class DataLoaderManager implements AppModule {
     if (SITE_VARIANT !== 'happy' && !isDesktopRuntime()) tasks.push({ name: 'iranAttacks', task: runGuarded('iranAttacks', () => this.loadIranEvents()) });
     if (SITE_VARIANT !== 'happy' && (this.ctx.mapLayers.techEvents || SITE_VARIANT === 'tech')) tasks.push({ name: 'techEvents', task: runGuarded('techEvents', () => this.loadTechEvents()) });
     if (SITE_VARIANT !== 'happy' && this.ctx.mapLayers.satellites && this.ctx.map?.isGlobeMode?.()) tasks.push({ name: 'satellites', task: runGuarded('satellites', () => this.loadSatellites()) });
+    if (SITE_VARIANT !== 'happy' && this.ctx.mapLayers.webcams) tasks.push({ name: 'webcams', task: runGuarded('webcams', () => this.loadWebcams()) });
 
     if (SITE_VARIANT !== 'happy') {
       tasks.push({ name: 'techReadiness', task: runGuarded('techReadiness', () => (this.ctx.panels['tech-readiness'] as TechReadinessPanel)?.refresh()) });
@@ -562,6 +569,9 @@ export class DataLoaderManager implements AppModule {
           this.loadImageryFootprints();
           break;
         }
+        case 'webcams':
+          await this.loadWebcams();
+          break;
         case 'ucdpEvents':
         case 'displacement':
         case 'climate':
@@ -1335,7 +1345,7 @@ export class DataLoaderManager implements AppModule {
 
   async loadPredictions(): Promise<void> {
     try {
-      const predictions = await fetchPredictions();
+      const predictions = await fetchPredictions({ region: this.ctx.resolvedLocation });
       this.ctx.latestPredictions = predictions;
       (this.ctx.panels['polymarket'] as PredictionPanel | undefined)?.renderPredictions(predictions);
 
@@ -1351,6 +1361,14 @@ export class DataLoaderManager implements AppModule {
       dataFreshness.recordError('polymarket', String(error));
       dataFreshness.recordError('predictions', String(error));
     }
+  }
+
+  async loadForecasts(): Promise<void> {
+    try {
+      const { fetchForecasts } = await import('@/services/forecast');
+      const forecasts = await fetchForecasts();
+      this.callPanel('forecast', 'updateForecasts', forecasts);
+    } catch { /* premium feature, silent fail */ }
   }
 
   async loadNatural(): Promise<void> {
@@ -1398,17 +1416,34 @@ export class DataLoaderManager implements AppModule {
     }
 
     try {
-      const client = new ResearchServiceClient(getRpcBaseUrl(), { fetch: (...args: Parameters<typeof fetch>) => globalThis.fetch(...args) });
-      const data = await client.listTechEvents({
-        type: 'conference',
-        mappable: true,
-        days: 90,
-        limit: 50,
-      });
-      if (!data.success) throw new Error(data.error || 'Unknown error');
+      // Try hydrated bootstrap data first (instant, no RPC)
+      const hydrated = getHydratedData('techEvents') as { events?: Array<{ id: string; title: string; type: string; location: string; coords?: { lat: number; lng: number; country: string; virtual?: boolean }; startDate: string; endDate: string; url: string }> } | undefined;
+      let events = hydrated?.events;
+
+      if (!events?.length) {
+        // Fallback: RPC call
+        const client = new ResearchServiceClient(getRpcBaseUrl(), { fetch: (...args: Parameters<typeof fetch>) => globalThis.fetch(...args) });
+        const data = await client.listTechEvents({
+          type: 'conference',
+          mappable: true,
+          days: 90,
+          limit: 50,
+        });
+        if (!data.success) throw new Error(data.error || 'Unknown error');
+        events = data.events;
+      } else {
+        // Filter hydrated data to match map layer needs (conferences, mappable, 90 days)
+        const cutoff = new Date();
+        cutoff.setDate(cutoff.getDate() + 90);
+        events = events.filter(e =>
+          e.type === 'conference' &&
+          e.coords && !e.coords.virtual &&
+          new Date(e.startDate) <= cutoff,
+        ).slice(0, 50);
+      }
 
       const now = new Date();
-      const mapEvents = data.events.map((e: any) => ({
+      const mapEvents = (events || []).map((e: any) => ({
         id: e.id,
         title: e.title,
         location: e.location,
@@ -1457,6 +1492,7 @@ export class DataLoaderManager implements AppModule {
 
   async loadIntelligenceSignals(): Promise<void> {
     resetHotspotActivity();
+    const _desktopLocked = isDesktopRuntime() && !getSecretState('WORLDMONITOR_API_KEY').present;
     const tasks: Promise<void>[] = [];
 
     tasks.push((async () => {
@@ -1676,32 +1712,36 @@ export class DataLoaderManager implements AppModule {
     // Security advisories
     tasks.push(this.loadSecurityAdvisories());
 
-    // Telegram Intel
-    tasks.push(this.loadTelegramIntel());
+    // Telegram Intel (premium-locked on desktop without API key)
+    if (!_desktopLocked) {
+      tasks.push(this.loadTelegramIntel());
+    }
 
-    // OREF sirens
-    tasks.push((async () => {
-      try {
-        const data = await fetchOrefAlerts();
-        this.callPanel('oref-sirens', 'setData', data);
-        const alertCount = data.alerts?.length ?? 0;
-        const historyCount24h = data.historyCount24h ?? 0;
-        ingestOrefForCII(alertCount, historyCount24h);
-        this.ctx.intelligenceCache.orefAlerts = { alertCount, historyCount24h };
-        if (data.alerts?.length) dispatchOrefBreakingAlert(data.alerts);
-        onOrefAlertsUpdate((update) => {
-          this.callPanel('oref-sirens', 'setData', update);
-          const updAlerts = update.alerts?.length ?? 0;
-          const updHistory = update.historyCount24h ?? 0;
-          ingestOrefForCII(updAlerts, updHistory);
-          this.ctx.intelligenceCache.orefAlerts = { alertCount: updAlerts, historyCount24h: updHistory };
-          if (update.alerts?.length) dispatchOrefBreakingAlert(update.alerts);
-        });
-        startOrefPolling();
-      } catch (error) {
-        console.error('[Intelligence] OREF alerts fetch failed:', error);
-      }
-    })());
+    // OREF sirens (premium-locked on desktop without API key)
+    if (!_desktopLocked) {
+      tasks.push((async () => {
+        try {
+          const data = await fetchOrefAlerts();
+          this.callPanel('oref-sirens', 'setData', data);
+          const alertCount = data.alerts?.length ?? 0;
+          const historyCount24h = data.historyCount24h ?? 0;
+          ingestOrefForCII(alertCount, historyCount24h);
+          this.ctx.intelligenceCache.orefAlerts = { alertCount, historyCount24h };
+          if (data.alerts?.length) dispatchOrefBreakingAlert(data.alerts);
+          onOrefAlertsUpdate((update) => {
+            this.callPanel('oref-sirens', 'setData', update);
+            const updAlerts = update.alerts?.length ?? 0;
+            const updHistory = update.historyCount24h ?? 0;
+            ingestOrefForCII(updAlerts, updHistory);
+            this.ctx.intelligenceCache.orefAlerts = { alertCount: updAlerts, historyCount24h: updHistory };
+            if (update.alerts?.length) dispatchOrefBreakingAlert(update.alerts);
+          });
+          startOrefPolling();
+        } catch (error) {
+          console.error('[Intelligence] OREF alerts fetch failed:', error);
+        }
+      })());
+    }
 
     // GPS/GNSS jamming (cloud-only — seeded by Wingbits API via fetch-gpsjam.mjs)
     if (!isDesktopRuntime()) {
@@ -1981,6 +2021,51 @@ export class DataLoaderManager implements AppModule {
       this.ctx.statusPanel?.updateApi('ACLED', { status: 'error' });
       this.ctx.statusPanel?.updateApi('GDELT Doc', { status: 'error' });
       dataFreshness.recordError('gdelt_doc', String(error));
+    }
+  }
+
+  private lastWebcamBbox: { w: number; s: number; e: number; n: number; zoom: number } | null = null;
+  private lastWebcamFetchAt = 0;
+
+  async loadWebcams(): Promise<void> {
+    if (!this.ctx.map) return;
+    try {
+      const map = this.ctx.map;
+      const zoom = map.getState().zoom ?? 3;
+
+      if (zoom < 2) return;
+
+      const now = Date.now();
+      if (now - this.lastWebcamFetchAt < 1000) return;
+
+      const bboxStr = map.getBbox();
+      const parts = bboxStr ? bboxStr.split(',').map(Number) : [-180, -90, 180, 90];
+      const w = parts[0] ?? -180;
+      const s = parts[1] ?? -90;
+      const e = parts[2] ?? 180;
+      const n = parts[3] ?? 90;
+
+      if (this.lastWebcamBbox && this.lastWebcamBbox.zoom === zoom) {
+        const prev = this.lastWebcamBbox;
+        const overlapW = Math.max(0, Math.min(prev.e, e) - Math.max(prev.w, w));
+        const overlapH = Math.max(0, Math.min(prev.n, n) - Math.max(prev.s, s));
+        const overlapArea = overlapW * overlapH;
+        const currentArea = Math.max(0.001, (e - w) * (n - s));
+        if (overlapArea / currentArea > 0.8) return;
+      }
+
+      this.lastWebcamFetchAt = now;
+      this.lastWebcamBbox = { w, s, e, n, zoom };
+
+      const { fetchWebcams } = await import('@/services/webcams');
+      const result = await fetchWebcams(zoom, { w, s, e, n });
+
+      const allMarkers = [...result.webcams, ...result.clusters];
+      map.setWebcams(allMarkers);
+      map.setLayerReady('webcams', allMarkers.length > 0);
+    } catch (err) {
+      console.warn('[data-loader] webcams failed:', err);
+      this.ctx.map?.setLayerReady('webcams', false);
     }
   }
 
@@ -2572,11 +2657,15 @@ export class DataLoaderManager implements AppModule {
   }
 
   async loadTelegramIntel(): Promise<void> {
+    if (isDesktopRuntime() && !getSecretState('WORLDMONITOR_API_KEY').present) return;
     try {
       const result = await fetchTelegramFeed();
       this.callPanel('telegram-intel', 'setData', result);
     } catch (error) {
       console.error('[App] Telegram intel fetch failed:', error);
+      this.callPanel('telegram-intel', 'setData', {
+        source: 'telegram', enabled: false, count: 0, updatedAt: null, items: [],
+      });
     }
   }
 }
