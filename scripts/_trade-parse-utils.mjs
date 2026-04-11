@@ -15,7 +15,8 @@ export function htmlToPlainText(html) {
   return String(html ?? '')
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<\/?[A-Za-z][A-Za-z0-9:-]*(?:\s[^<>]*?)?>/g, ' ')
     .replace(/&nbsp;/gi, ' ')
     .replace(/&amp;/gi, '&')
     .replace(/&quot;/gi, '"')
@@ -56,6 +57,7 @@ export function parseBudgetLabEffectiveTariffHtml(html) {
 
   const updatedAt = toIsoDate(text.match(/\bUpdated:\s*([A-Za-z]+\s+\d{1,2},\s+\d{4})/i)?.[1] ?? '');
   const patterns = [
+    /effective tariff rate (?:stood at|was|is)\s+(\d+(?:\.\d+)?)%/i,
     /effective tariff rate reaching\s+(\d+(?:\.\d+)?)%\s+in\s+([A-Za-z]+\s+\d{4})/i,
     /average effective (?:u\.s\.\s*)?tariff rate[^.]{0,180}?\bto\s+(\d+(?:\.\d+)?)%[^.]{0,180}?\b(?:in|by)\s+([A-Za-z]+\s+\d{4})/i,
     /average effective (?:u\.s\.\s*)?tariff rate[^.]{0,180}?\bto\s+(\d+(?:\.\d+)?)%/i,

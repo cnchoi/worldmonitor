@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { loadEnvFile, maskToken, runSeed, CHROME_UA, sleep } from './_seed-utils.mjs';
+import { loadEnvFile, runSeed, CHROME_UA, sleep } from './_seed-utils.mjs';
 
 loadEnvFile(import.meta.url);
 
@@ -78,19 +78,22 @@ async function fetchAllRegions(apiKey) {
           if (seen.has(id)) continue;
           seen.add(id);
           const detectedAt = parseDetectedAt(row.acq_date || '', row.acq_time || '');
+          const brightness = parseFloat(row.bright_ti4 ?? '0') || 0;
+          const frp = parseFloat(row.frp ?? '0') || 0;
           fireDetections.push({
             id,
             location: {
               latitude: parseFloat(row.latitude ?? '0') || 0,
               longitude: parseFloat(row.longitude ?? '0') || 0,
             },
-            brightness: parseFloat(row.bright_ti4 ?? '0') || 0,
-            frp: parseFloat(row.frp ?? '0') || 0,
+            brightness,
+            frp,
             confidence: mapConfidence(row.confidence || ''),
             satellite: row.satellite || '',
             detectedAt,
             region: regionName,
             dayNight: row.daynight || '',
+            possibleExplosion: frp > 80 && brightness > 380,
           });
         }
       } catch (err) {
@@ -112,7 +115,7 @@ async function main() {
     process.exit(0);
   }
 
-  console.log(`  FIRMS key: ${maskToken(apiKey)}`);
+  console.log('  FIRMS key configured');
 
   await runSeed('wildfire', 'fires', CANONICAL_KEY, () => fetchAllRegions(apiKey), {
     validateFn: (data) => Array.isArray(data?.fireDetections) && data.fireDetections.length > 0,
