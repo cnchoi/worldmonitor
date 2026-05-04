@@ -79,6 +79,16 @@ const ISO2_TO_UN = Object.fromEntries(
   Object.entries(UN_TO_ISO2).map(([un, iso2]) => [iso2, un]),
 );
 
+// UN Comtrade uses non-standard reporter codes for some countries.
+// These override the standard UN M49 codes from un-to-iso2.json.
+const COMTRADE_REPORTER_OVERRIDES = {
+  FR: '251', // UN M49 standard is 250, but Comtrade registers France as reporter 251
+  IT: '381', // UN M49 standard is 380, but Comtrade registers Italy as reporter 381
+  US: '842', // UN M49 standard is 840, but Comtrade registers the US as reporter 842
+  IN: '699', // UN M49 standard is 356, Comtrade registers India as reporter 699
+  TW: '490', // M49 has no entry; Comtrade reports Taiwan as 490 "Other Asia, nes"
+};
+
 /**
  * @param {Array<string[]>} commands
  */
@@ -102,43 +112,84 @@ async function redisPipeline(commands) {
  * @param {string[]} hs4Batch
  * @returns {Promise<Array<{cmdCode: string, partnerCode: string, primaryValue: number, year: number}>>}
  */
-async function fetchBilateral(reporterCode, hs4Batch) {
+// Comtrade's API regularly returns transient 5xx (500/502/503/504) on otherwise
+// valid reporter fetches — observed 2026-04-14 with India (699) 503×2 and
+// Iran (364) 500. Without a 5xx retry those reporters silently drop from
+// the snapshot and the panel shows missing countries for a full cycle.
+export function isTransientComtrade(status) {
+  return status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+// Retry sleep is indirected through a module-local binding so unit tests can
+// swap in a no-op without changing production cadence. Production defaults
+// to the real sleep import; tests call __setSleepForTests(() => Promise.resolve()).
+let _retrySleep = sleep;
+export function __setSleepForTests(fn) { _retrySleep = typeof fn === 'function' ? fn : sleep; }
+
+async function fetchBilateralOnce(url, timeoutMs = 45_000) {
+  return fetch(url, {
+    headers: { 'User-Agent': CHROME_UA, Accept: 'application/json' },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+}
+
+function buildFetchUrl(reporterCode, hs4Batch, key) {
   const url = new URL(COMTRADE_FETCH_URL);
   url.searchParams.set('reporterCode', reporterCode);
   url.searchParams.set('cmdCode', hs4Batch.join(','));
   url.searchParams.set('flowCode', 'M');
-  const key = getNextKey();
   if (key) url.searchParams.set('subscription-key', key);
+  return url.toString();
+}
 
-  const resp = await fetch(url.toString(), {
-    headers: { 'User-Agent': CHROME_UA, Accept: 'application/json' },
-    signal: AbortSignal.timeout(20_000),
-  });
+/**
+ * Single classification loop so a post-429 5xx still consumes the bounded
+ * 5xx retries (and vice versa). Caps: one 429 wait (60s), then up to two
+ * transient-5xx retries (5s, 15s). Any non-transient non-OK status exits.
+ *
+ * @param {string} reporterCode
+ * @param {string[]} hs4Batch
+ * @returns {Promise<Array<{cmdCode: string, partnerCode: string, primaryValue: number, year: number}>>}
+ */
+export async function fetchBilateral(reporterCode, hs4Batch) {
+  let rateLimitedOnce = false;
+  let transientRetries = 0;
+  const MAX_TRANSIENT_RETRIES = 2;
 
-  if (resp.status === 429) {
-    console.warn(`  429 rate-limited for reporter ${reporterCode}, waiting 60s...`);
-    await sleep(60_000);
-    const retryKey = getNextKey();
-    const retryUrl = new URL(COMTRADE_FETCH_URL);
-    retryUrl.searchParams.set('reporterCode', reporterCode);
-    retryUrl.searchParams.set('cmdCode', hs4Batch.join(','));
-    retryUrl.searchParams.set('flowCode', 'M');
-    if (retryKey) retryUrl.searchParams.set('subscription-key', retryKey);
-    const retry = await fetch(retryUrl.toString(), {
-      headers: { 'User-Agent': CHROME_UA, Accept: 'application/json' },
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!retry.ok) {
-      console.warn(`  Retry for reporter ${reporterCode} also failed (HTTP ${retry.status})`);
-      return [];
+  let resp;
+  while (true) {
+    resp = await fetchBilateralOnce(buildFetchUrl(reporterCode, hs4Batch, getNextKey()));
+
+    if (resp.status === 429 && !rateLimitedOnce) {
+      console.warn(`  429 rate-limited for reporter ${reporterCode}, waiting 60s...`);
+      await _retrySleep(60_000);
+      rateLimitedOnce = true;
+      continue;
     }
-    const retryData = await retry.json();
-    return parseRecords(retryData);
+
+    if (isTransientComtrade(resp.status) && transientRetries < MAX_TRANSIENT_RETRIES) {
+      const delay = transientRetries === 0 ? 5_000 : 15_000;
+      console.warn(`    transient HTTP ${resp.status} for reporter ${reporterCode}, retrying in ${delay / 1000}s...`);
+      await _retrySleep(delay);
+      transientRetries++;
+      continue;
+    }
+
+    break;
   }
 
-  if (!resp.ok) return [];
+  if (!resp.ok) {
+    const tag = (rateLimitedOnce || transientRetries > 0) ? ' (after retries)' : '';
+    console.warn(`    HTTP ${resp.status} for reporter ${reporterCode}${tag}`);
+    return [];
+  }
+
   const data = await resp.json();
-  return parseRecords(data);
+  const parsed = parseRecords(data);
+  if (parsed.length === 0 && data?.count > 0) {
+    console.warn(`    Reporter ${reporterCode}: API returned count=${data.count} but parseRecords produced 0 — response shape may have changed`);
+  }
+  return parsed;
 }
 
 /**
@@ -235,7 +286,7 @@ export async function main() {
 
     for (let i = 0; i < countries.length; i++) {
       const [iso2] = countries[i];
-      const unCode = ISO2_TO_UN[iso2];
+      const unCode = COMTRADE_REPORTER_OVERRIDES[iso2] ?? ISO2_TO_UN[iso2];
       if (!unCode) {
         console.warn(`  ${iso2}: no UN code, skipping`);
         continue;

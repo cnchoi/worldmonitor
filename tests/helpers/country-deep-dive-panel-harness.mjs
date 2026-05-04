@@ -87,12 +87,24 @@ async function loadCountryDeepDivePanel() {
     `],
     ['country-flag-stub', `export function toFlagEmoji(code, fallback = '🌍') { return code ? ':' + code + ':' : fallback; }`],
     ['ports-stub', `export const PORTS = [];`],
-    ['trade-routes-stub', `export function getChokepointRoutes() { return []; }`],
+    ['trade-routes-stub', `export function getChokepointRoutes() { return []; } export const TRADE_ROUTES = [];`],
     ['geo-stub', `export const STRATEGIC_WATERWAYS = [];`],
     ['analytics-stub', `export function trackGateHit() {}`],
+    ['chokepoint-registry-stub', `export const CHOKEPOINT_REGISTRY = [];`],
+    ['supplier-route-risk-stub', `
+      export function computeAlternativeSuppliers(exporters) {
+        return exporters.map(e => ({ ...e, risk: { riskLevel: 'safe', transitChokepoints: [], maxDisruptionScore: 0, recommendation: '', routeIds: [], exporterIso2: e.partnerIso2, importerIso2: '' }, safeAlternative: null }));
+      }
+      export function computeSupplierRouteRisk() {
+        return { riskLevel: 'safe', transitChokepoints: [], maxDisruptionScore: 0, recommendation: '', routeIds: [], exporterIso2: '', importerIso2: '' };
+      }
+    `],
     ['supply-chain-stub', `
       export function fetchBypassOptions() { return Promise.resolve({ corridors: [] }); }
       export function getCountryChokepointIndex() { return null; }
+      export function fetchChokepointStatus() { return Promise.resolve({ chokepoints: [], fetchedAt: '', upstreamUnavailable: false }); }
+      export function fetchMultiSectorCostShock() { return Promise.resolve({ iso2: '', chokepointId: '', closureDays: 30, warRiskTier: 'WAR_RISK_TIER_UNSPECIFIED', sectors: [], totalAddedCost: 0, fetchedAt: '', unavailableReason: '' }); }
+      export const HS2_SHORT_LABELS = { '27': 'Energy', '84': 'Machinery', '85': 'Electronics', '87': 'Vehicles', '30': 'Pharma', '72': 'Iron & Steel', '39': 'Plastics', '29': 'Chemicals', '10': 'Cereals', '62': 'Apparel' };
     `],
     ['runtime-stub', `
       export function toApiUrl(path) { return path; }
@@ -144,6 +156,8 @@ async function loadCountryDeepDivePanel() {
     ['@/config/trade-routes', 'trade-routes-stub'],
     ['@/config/geo', 'geo-stub'],
     ['@/services/analytics', 'analytics-stub'],
+    ['@/config/chokepoint-registry', 'chokepoint-registry-stub'],
+    ['@/utils/supplier-route-risk', 'supplier-route-risk-stub'],
     ['@/services/supply-chain', 'supply-chain-stub'],
     ['./ResilienceWidget', 'resilience-widget-stub'],
     ['@/services/runtime', 'runtime-stub'],

@@ -177,6 +177,15 @@ export const RESILIENCE_FIXTURES: FixtureMap = {
       YE: { inflationPct: 22.0, currentAccountPct: -6.0, govRevenuePct: 8.0, year: 2024 },
     },
   },
+  // IMF WEO labor (issue #3027) — LUR sub-metric for scoreMacroFiscal.
+  // Coverage ~150 countries; null-tolerant in the scorer.
+  'economic:imf:labor:v1': {
+    countries: {
+      NO: { unemploymentPct: 3.7, populationMillions: 5.5, year: 2024 },
+      US: { unemploymentPct: 4.1, populationMillions: 333.3, year: 2024 },
+      YE: { unemploymentPct: 18.0, populationMillions: 33.7, year: 2024 },
+    },
+  },
   'economic:bis:eer:v1': {
     rates: [
       { countryCode: 'NO', realChange: 1.0, realEer: 100, date: '2025-08' },
@@ -380,6 +389,89 @@ export const RESILIENCE_FIXTURES: FixtureMap = {
   'seed-meta:resilience:static': {
     fetchedAt: 1712102400000,
     recordCount: 196,
+  },
+  // plan 2026-04-25-004 Phase 2: financialSystemExposure seed-meta + data
+  // fixtures. The scorer preflights all 3 seed-meta envelopes (fail-closed)
+  // before per-component reads; absence of any of these throws
+  // ResilienceConfigurationError and routes to source-failure imputation.
+  'seed-meta:economic:wb-external-debt:v1': {
+    fetchedAt: 1714694400000,
+    recordCount: 125,
+  },
+  'seed-meta:economic:bis-lbs:v1': {
+    fetchedAt: 1714694400000,
+    recordCount: 200,
+  },
+  'seed-meta:economic:fatf-listing:v1': {
+    fetchedAt: 1714694400000,
+    recordCount: 200,
+  },
+  'economic:wb-external-debt:v1': {
+    countries: {
+      NO: { value: 2, year: 2024 },     // 2% GNI — Norway low external debt → score ~87
+      US: { value: 0, year: 2024 },     // HIC, WB IDS doesn't publish — fixture treats as 0 for the test triple
+      YE: { value: 14, year: 2023 },    // ~14% GNI — fragile state near worst goalpost → score ~7
+    },
+    seededAt: '2026-04-25T00:00:00.000Z',
+  },
+  'economic:bis-lbs:v1': {
+    countries: {
+      NO: { totalXborderPctGdp: 18, parentCount: 8 },  // sweet spot + diverse parents → high score
+      US: { totalXborderPctGdp: 22, parentCount: 9 },  // sweet spot + diverse parents → high score
+      YE: { totalXborderPctGdp: 2, parentCount: 1 },   // financial isolation → low score
+    },
+    seededAt: '2026-04-25T00:00:00.000Z',
+  },
+  'economic:fatf-listing:v1': {
+    listings: {
+      NO: 'compliant',
+      US: 'compliant',
+      YE: 'gray',
+    },
+    publicationDate: '2026-02-13',
+    seededAt: '2026-04-25T00:00:00.000Z',
+  },
+  'resilience:recovery:fiscal-space:v1': {
+    countries: {
+      NO: { govRevenuePct: 42, fiscalBalancePct: 10, debtToGdpPct: 40, year: 2025 },
+      US: { govRevenuePct: 30, fiscalBalancePct: -6, debtToGdpPct: 122, year: 2025 },
+      YE: { govRevenuePct: 8, fiscalBalancePct: -10, debtToGdpPct: 80, year: 2024 },
+    },
+    seededAt: '2026-04-04T00:00:00.000Z',
+  },
+  'resilience:recovery:reserve-adequacy:v1': {
+    countries: {
+      NO: { reserveMonths: 14, year: 2024 },
+      US: { reserveMonths: 3, year: 2024 },
+      YE: { reserveMonths: 0.5, year: 2023 },
+    },
+    seededAt: '2026-04-04T00:00:00.000Z',
+  },
+  'resilience:recovery:external-debt:v1': {
+    countries: {
+      NO: { debtToReservesRatio: 0.2, year: 2024 },
+      US: { debtToReservesRatio: 1.5, year: 2024 },
+      YE: { debtToReservesRatio: 4.0, year: 2023 },
+    },
+    seededAt: '2026-04-04T00:00:00.000Z',
+  },
+  // HHI on 0..1 scale (seeder output). Scorer multiplies by 10000 for normalization.
+  // NO: 0.03 = very diversified, US: 0.06 = diversified, YE: 0.35 = concentrated
+  'resilience:recovery:import-hhi:v1': {
+    countries: {
+      NO: { hhi: 0.03, concentrated: false, partnerCount: 120 },
+      US: { hhi: 0.06, concentrated: false, partnerCount: 180 },
+      YE: { hhi: 0.35, concentrated: true, partnerCount: 15 },
+    },
+    seededAt: '2026-04-04T00:00:00.000Z',
+  },
+  // Fuel-stocks: fuelStockDays (not stockDays), matching seeder output shape
+  'resilience:recovery:fuel-stocks:v1': {
+    countries: {
+      NO: { fuelStockDays: 90, meetsObligation: true, belowObligation: false },
+      US: { fuelStockDays: 60, meetsObligation: false, belowObligation: true },
+    },
+    seededAt: '2026-04-04T00:00:00.000Z',
   },
 };
 

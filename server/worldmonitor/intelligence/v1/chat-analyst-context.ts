@@ -9,7 +9,7 @@ import {
   ENERGY_INTELLIGENCE_KEY,
   SPR_KEY,
   SPR_POLICIES_KEY,
-  REFINERY_UTIL_KEY,
+  REFINERY_INPUTS_KEY,
   ENERGY_SPINE_KEY_PREFIX,
 } from '../../../_shared/cache-keys';
 
@@ -69,7 +69,7 @@ function formatChange(n: number): string {
   return `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
 }
 
-function buildWorldBrief(data: unknown): string {
+export function buildWorldBrief(data: unknown): string {
   if (!data || typeof data !== 'object') return '';
   const d = data as Record<string, unknown>;
   const lines: string[] = [];
@@ -88,7 +88,7 @@ function buildWorldBrief(data: unknown): string {
   return lines.join('\n');
 }
 
-function buildRiskScores(data: unknown): string {
+export function buildRiskScores(data: unknown): string {
   if (!data || typeof data !== 'object') return '';
   const d = data as Record<string, unknown>;
   const scores = Array.isArray(d.scores) ? d.scores : Array.isArray(d.countries) ? d.countries : [];
@@ -133,7 +133,7 @@ function buildMarketImplications(data: unknown): string {
   return lines.length ? `AI Market Signals:\n${lines.join('\n')}` : '';
 }
 
-function buildForecasts(data: unknown): string {
+export function buildForecasts(data: unknown): string {
   if (!data || typeof data !== 'object') return '';
   const d = data as Record<string, unknown>;
   const predictions = Array.isArray(d.predictions) ? d.predictions : [];
@@ -152,7 +152,7 @@ function buildForecasts(data: unknown): string {
   return lines.length ? `Active Forecasts:\n${lines.join('\n')}` : '';
 }
 
-function buildMarketData(stocks: unknown, commodities: unknown): string {
+export function buildMarketData(stocks: unknown, commodities: unknown): string {
   const parts: string[] = [];
 
   if (stocks && typeof stocks === 'object') {
@@ -186,7 +186,7 @@ function buildMarketData(stocks: unknown, commodities: unknown): string {
   return parts.length ? `Market Data:\n${parts.join('\n')}` : '';
 }
 
-function buildMacroSignals(data: unknown): string {
+export function buildMacroSignals(data: unknown): string {
   if (!data || typeof data !== 'object') return '';
   const d = data as Record<string, unknown>;
   const verdict = safeStr(d.verdict || d.regime || d.signal);
@@ -362,7 +362,7 @@ async function buildSprLevel(): Promise<string | undefined> {
 
 async function buildRefineryUtil(): Promise<string | undefined> {
   try {
-    const data = await getCachedJson(REFINERY_UTIL_KEY, true);
+    const data = await getCachedJson(REFINERY_INPUTS_KEY, true);
     if (!data || typeof data !== 'object') return undefined;
     const d = data as Record<string, unknown>;
     if (typeof d.inputsMbblpd !== 'number') return undefined;
@@ -570,7 +570,7 @@ async function buildElectricityMix(iso2: string): Promise<string | undefined> {
   }
 }
 
-function buildCountryBrief(data: unknown): string {
+export function buildCountryBrief(data: unknown): string {
   if (!data || typeof data !== 'object') return '';
   const d = data as Record<string, unknown>;
   const brief = safeStr(d.brief || d.analysis || d.content || d.summary);
